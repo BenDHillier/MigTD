@@ -231,9 +231,8 @@ impl VirtioTransport for VirtioPciTransport {
                 } else {
                     return Err(VirtioError::InvalidParameter);
                 }
-
                 if cfg_type == VirtioPciCapabilityType::CommonConfig as u8 {
-                    if address == 0 || length < COMMON_CONFIGURATION_REGISTERS_OFFSET {
+                    if /*address == 0 ||*/ length < COMMON_CONFIGURATION_REGISTERS_OFFSET {
                         return Err(VirtioError::InvalidParameter);
                     }
                     check_region.set_region(
@@ -245,12 +244,11 @@ impl VirtioTransport for VirtioPciTransport {
                         mem::MemoryRegion::new(address + u64::from(offset), u64::from(length))
                             .ok_or(VirtioError::InvalidParameter)?;
                 }
-
                 if cfg_type == VirtioPciCapabilityType::NotifyConfig as u8 {
                     if cap_next == u8::MAX - CAP_LEN + 1 {
                         return Err(VirtioError::InvalidParameter);
                     }
-                    if address == 0 || length < core::mem::size_of::<u32>() as u32 {
+                    if /*address == 0 ||*/ length < core::mem::size_of::<u32>() as u32 {
                         return Err(VirtioError::InvalidParameter);
                     }
                     check_region.set_region(
@@ -268,7 +266,6 @@ impl VirtioTransport for VirtioPciTransport {
                     // };
                     self.notify_off_multiplier = self.device.read_u32(cap_next + CAP_LEN);
                 }
-
                 fn device_length_check(device_id: u16, length: u32) -> Option<u32> {
                     match device_id {
                         NETWORK_CARD => length.checked_sub(NETWORK_DEVICE_LENGTH),
@@ -287,9 +284,9 @@ impl VirtioTransport for VirtioPciTransport {
                         return Err(VirtioError::InvalidParameter);
                     }
 
-                    if address == 0 {
-                        return Err(VirtioError::InvalidParameter);
-                    }
+                    // if address == 0 {
+                    //     return Err(VirtioError::InvalidParameter);
+                    // }
 
                     check_region.set_region(
                         cfg_type as usize,
@@ -361,7 +358,7 @@ impl VirtioTransport for VirtioPciTransport {
         if check_region.flag[VirtioPciCapabilityType::CommonConfig as usize]
             && check_region.flag[VirtioPciCapabilityType::NotifyConfig as usize]
             && check_region.flag[VirtioPciCapabilityType::IsrConfig as usize]
-            && check_region.flag[VirtioPciCapabilityType::PciConfig as usize]
+            // && check_region.flag[VirtioPciCapabilityType::PciConfig as usize]
         {
             check_region.interval.sort_by(|a, b| a[0].cmp(&b[0]));
             for i in 1..check_region.interval.len() {

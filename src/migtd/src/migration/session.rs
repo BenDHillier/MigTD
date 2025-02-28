@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use core::mem::size_of;
 use scroll::Pread;
 use td_payload::mm::shared::SharedMemory;
+use td_payload::println;
 use td_shim_interface::td_uefi_pi::hob as hob_lib;
 use tdx_tdcall::{
     td_call,
@@ -95,6 +96,7 @@ impl Default for MigrationSession {
 
 impl MigrationSession {
     pub fn new() -> Self {
+        println!("Inside MigrationSession::new");
         MigrationSession {
             state: MigrationState::WaitForRequest,
         }
@@ -156,11 +158,14 @@ impl MigrationSession {
     }
 
     pub fn wait_for_request(&mut self) -> Result<()> {
+        println!("Waiting for request");
         match self.state {
             MigrationState::WaitForRequest => {
+                println!("MigrationState is WaitForRequest");
                 // Allocate shared page for command and response buffer
                 let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
                 let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+                println!("Allocated buffers");
 
                 // Set Migration wait for request command buffer
                 let mut cmd =
@@ -172,25 +177,34 @@ impl MigrationSession {
                     reserved: [0; 2],
                 };
                 cmd.write(wfr.as_bytes())?;
+                println!("Created request command");
                 let _ =
                     VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
                         .ok_or(MigrationResult::InvalidParameter)?;
-
+                        println!("About to loop");
                 loop {
                     #[cfg(feature = "vmcall-interrupt")]
                     {
+                        println!("tdvmcall_service");
                         tdx::tdvmcall_service(
                             cmd_mem.as_bytes(),
                             rsp_mem.as_mut_bytes(),
                             event::VMCALL_SERVICE_VECTOR as u64,
                             0,
                         )?;
+                        println!("waiting for vmcall interrupt");
                         event::wait_for_event(&event::VMCALL_SERVICE_FLAG);
+                        println!("Received wait request");
                     }
                     #[cfg(not(feature = "vmcall-interrupt"))]
-                    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
+                    {
+                        println!("waiting for non-interrupt request");
+                        tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
+                        println!("Received non-interrupt request: {:?}", rsp_mem.as_bytes());
+                    }
 
                     let private_mem = rsp_mem.copy_to_private_shadow();
+                    println!("private_mem: {:?}", private_mem);
 
                     // Parse out the response data
                     let rsp = VmcallServiceResponse::try_read(private_mem)
@@ -206,10 +220,12 @@ impl MigrationSession {
                         return Err(MigrationResult::InvalidParameter);
                     }
                     if wfr.operation == 1 {
+                        println!("Reading mig info");
                         let mig_info = Self::read_mig_info(
                             &private_mem[24 + size_of::<ServiceMigWaitForReqResponse>()..],
                         )
                         .ok_or(MigrationResult::InvalidParameter)?;
+                        println!("Time to operate!");
                         self.state = MigrationState::Operate(MigrationOperation::Migrate(mig_info));
 
                         return Ok(());
@@ -234,16 +250,25 @@ impl MigrationSession {
 
     #[cfg(feature = "main")]
     pub fn op(&mut self) -> Result<()> {
+        log::info!("Doing op");
+        println!("Doing opps");
         match &self.state {
             MigrationState::Operate(operation) => match operation {
                 MigrationOperation::Migrate(info) => {
+                    println!("Calling Self::migrate");
                     let state = Self::migrate(info);
+                    if state.is_err() {
+                        println!("migrate returned with state {}", (state.unwrap_err()) as u8);
+                    } else {
+                        println!("migrate succeeded");
+                    }
+                    
                     self.state = MigrationState::Complete(RequestInformation {
                         request_id: info.mig_info.mig_request_id,
                         operation: 1,
                     });
 
-                    state
+                    Ok(())
                 }
             },
             _ => Err(MigrationResult::InvalidParameter),
@@ -320,21 +345,26 @@ impl MigrationSession {
 
     #[cfg(feature = "main")]
     fn migrate(info: &MigrationInformation) -> Result<()> {
+        println!("Starting migration");
         let mut msk = MigrationSessionKey::new();
 
         for idx in 0..msk.fields.len() {
+            println!("Calling servtd_rd");
             let ret = tdx::tdcall_servtd_rd(
                 info.mig_info.binding_handle,
                 TDCS_FIELD_MIG_ENC_KEY + idx as u64,
                 &info.mig_info.target_td_uuid,
             )?;
+            println!("Got content: {}", ret.content);
             msk.fields[idx] = ret.content;
         }
+        println!("Got session key");
 
         let transport;
         #[cfg(feature = "virtio-serial")]
         {
             use virtio_serial::VirtioSerialPort;
+            println!("Creating vsock-serial connection?");
             const VIRTIO_SERIAL_PORT_ID: u32 = 1;
 
             let port = VirtioSerialPort::new(VIRTIO_SERIAL_PORT_ID);
@@ -345,13 +375,15 @@ impl MigrationSession {
         #[cfg(not(feature = "virtio-serial"))]
         {
             use vsock::{stream::VsockStream, VsockAddr};
+            println!("Creating vsock connection");
             // Establish the vsock connection with host
             let mut vsock = VsockStream::new()?;
+            println!("Connect to vsock: migtd_cid: {}", info.mig_socket_info.mig_td_cid);
             vsock.connect(&VsockAddr::new(
-                info.mig_socket_info.mig_td_cid as u32,
+                0 as u32,
                 info.mig_socket_info.mig_channel_port,
             ))?;
-
+            println!("Created vsock connection");
             transport = vsock;
         };
 
@@ -363,6 +395,7 @@ impl MigrationSession {
 
         // Establish TLS layer connection and negotiate the MSK
         if info.is_src() {
+            println!("Checking export version");
             let min_export_version = tdcall_sys_rd(GSM_FIELD_MIN_EXPORT_VERSION)?.1;
             let max_export_version = tdcall_sys_rd(GSM_FIELD_MAX_EXPORT_VERSION)?.1;
             if min_export_version > u16::MAX as u64 || max_export_version > u16::MAX as u64 {
@@ -370,17 +403,20 @@ impl MigrationSession {
             }
             exchange_information.min_ver = min_export_version as u16;
             exchange_information.max_ver = max_export_version as u16;
-
+            println!("Create TLS client");
             // TLS client
             let mut ratls_client =
                 ratls::client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
-
+            println!("Sending migration session key!!!");
             // MigTD-S send Migration Session Forward key to peer
             ratls_client.write(exchange_information.as_bytes())?;
+            println!("Reading migration session key from target!!!");
             let size = ratls_client.read(remote_information.as_bytes_mut())?;
             if size < size_of::<ExchangeInformation>() {
+                println!("Failed to get session key from target :(");
                 return Err(MigrationResult::NetworkError);
             }
+            println!("Received target key");
         } else {
             let min_import_version = tdcall_sys_rd(GSM_FIELD_MIN_IMPORT_VERSION)?.1;
             let max_import_version = tdcall_sys_rd(GSM_FIELD_MAX_IMPORT_VERSION)?.1;
@@ -389,16 +425,21 @@ impl MigrationSession {
             }
             exchange_information.min_ver = min_import_version as u16;
             exchange_information.max_ver = max_import_version as u16;
-
+            println!("Creating tls server!");
             // TLS server
             let mut ratls_server =
                 ratls::server(transport).map_err(|_| MigrationResult::SecureSessionError)?;
-
-            ratls_server.write(exchange_information.as_bytes())?;
+            println!("Created tls server.");
+            if let Err(e) = ratls_server.write(exchange_information.as_bytes()) {
+                println!("tls write failed with err: {:?}", e);
+            }
+            println!("Sent exchange information!");
             let size = ratls_server.read(remote_information.as_bytes_mut())?;
             if size < size_of::<ExchangeInformation>() {
+                println!("Failed to read remote information");
                 return Err(MigrationResult::NetworkError);
             }
+            println!("Read remote information!");
         }
 
         let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
@@ -421,19 +462,23 @@ impl MigrationSession {
     }
 
     fn read_mig_info(hob: &[u8]) -> Option<MigrationInformation> {
+        println!("Reading mig_info: {:?}", hob);
         let mig_info_hob =
             hob_lib::get_next_extension_guid_hob(hob, MIGRATION_INFORMATION_HOB_GUID.as_bytes())?;
-
+        println!("Got mig_info_hob: {:?}", mig_info_hob);
         let mig_info = hob_lib::get_guid_data(mig_info_hob)?
             .pread::<MigtdMigrationInformation>(0)
             .ok()?;
+        println!("Got mig_info: {:?}", mig_info);
 
         let mig_socket_hob =
             hob_lib::get_next_extension_guid_hob(hob, STREAM_SOCKET_INFO_HOB_GUID.as_bytes())?;
+        println!("Got mig_socket_hob: {:?}", mig_socket_hob);
 
         let mig_socket_info = hob_lib::get_guid_data(mig_socket_hob)?
             .pread::<MigtdStreamSocketInfo>(0)
             .ok()?;
+            println!("Got mig_socket_info: {:?}", mig_socket_info);
 
         // Migration Information is optional here
         let mut mig_policy = None;
@@ -459,6 +504,7 @@ impl MigrationSession {
             mig_socket_info,
             mig_policy,
         };
+        log::info!("Got Migration Info: {:?}", mig_info.mig_info);
 
         Some(mig_info)
     }
@@ -479,6 +525,7 @@ pub fn tdcall_sys_rd(field_identifier: u64) -> core::result::Result<(u64, u64), 
     let ret = td_call(&mut args);
 
     if ret != TDCALL_STATUS_SUCCESS {
+        println!("tdcall output rax: {}", args.rax);
         return Err(ret.into());
     }
 

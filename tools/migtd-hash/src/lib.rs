@@ -26,18 +26,28 @@ pub fn calculate_servtd_hash(manifest: &[u8], mut image: File) -> Result<Vec<u8>
         mrownerconfig: manifest.mrownerconfig,
         ..Default::default()
     };
+    
+    // let mut td_info = TdInfoStruct {
+    //     attributes: 0,
+    //     xfam: 0,
+    //     mrconfig_id: 0,
+    //     mrowner: 0,
+    //     mrownerconfig: 0,
+    //     ..Default::default()
+    // };
 
     // Calculate the MRTD with MigTD image
     td_info.build_mrtd(&mut image, MIGTD_IMAGE_SIZE);
     // Calculate RTMR0 and RTMR1
-    td_info.build_rtmr_with_seperator(0);
+    // td_info.build_rtmr_with_seperator(0);
     // Calculate RTMR2 with CFV
-    let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
-    image.seek(SeekFrom::Start(0))?;
-    image.read(&mut cfv)?;
-    td_info.rtmr2.copy_from_slice(rtmr2(&cfv)?.as_slice());
+    // let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
+    // image.seek(SeekFrom::Start(0))?;
+    // image.read(&mut cfv)?;
+    // td_info.rtmr2.copy_from_slice(rtmr2(&cfv)?.as_slice());
 
     // Convert the TD info structure to bytes.
+    println!("Using Td info: {:?}", td_info);
     let mut buffer = [0u8; size_of::<TdInfoStruct>()];
     td_info.pack(&mut buffer);
 

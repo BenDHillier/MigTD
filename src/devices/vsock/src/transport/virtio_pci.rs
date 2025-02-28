@@ -20,6 +20,7 @@ use core::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut};
 use core::sync::atomic::{AtomicBool, Ordering};
 use virtio::virtqueue::{VirtQueue, VirtQueueLayout, VirtqueueBuf};
 use virtio::{consts::*, VirtioError, VirtioTransport};
+use td_payload::println;
 
 const QUEUE_RX: u16 = 0;
 const QUEUE_TX: u16 = 1;
@@ -181,8 +182,10 @@ impl VirtioVsock {
         let _ = self.rx.borrow_mut().pop_used(&mut g2h, &mut h2g)?;
         if h2g.len() != 2 {
             self.rx_buf_num -= h2g.len();
+            panic!("GOt InvalidVsockPacket in pop_used_Rx: {:?}", h2g);
             return Err(VsockTransportError::InvalidVsockPacket);
         }
+        println!("popped g2h: {:?} h2g: {:?}", g2h, h2g);
         self.rx_buf_num -= 2;
 
         self.recv_pkt(&h2g)?;
@@ -213,28 +216,38 @@ impl VirtioVsock {
     }
 
     fn recv_pkt(&mut self, pkt: &[VirtqueueBuf]) -> Result<()> {
+        println!("Inside virtio pci recv_pkt");
         let mut hdr_buf = Vec::new();
         let mut data_buf = Vec::new();
 
         // Read out the packet header
         if self.dma_record.contains_key(&pkt[0].addr) {
             if pkt[0].len != field::HEADER_LEN as u32 {
+                panic!("recv_pkt InvalidVsockPacket pkct[0].len = {}, {:?}", pkt[0].len, pkt[0]);
                 return Err(VsockTransportError::InvalidVsockPacket);
             }
 
             let dma_buf =
                 unsafe { &*slice_from_raw_parts(pkt[0].addr as *const u8, pkt[0].len as usize) };
-
+            println!("Got dma buf: {:?} from addr: 0x{:x}", dma_buf.clone(), pkt[0].addr);
             hdr_buf.extend_from_slice(dma_buf);
             self.free_dma_memory(pkt[0].addr)
                 .ok_or(VsockTransportError::DmaAllocation)?;
+        } else {
+            panic!("Ahhhh we don't have the key for pkt {:?} dma: {:?}", &pkt[0].addr, self.dma_record);
         }
-
-        let packet_hdr = Packet::new_checked(&hdr_buf[..])
-            .map_err(|_| VsockTransportError::InvalidVsockPacket)?;
+        // println!("Checking hdr_buf of size: {}" hdr_buf.len);
+        let r = Packet::new_checked(&hdr_buf[..]);
+            // .map_err(|_| Ok(()))?;
+        if r.is_err() {
+            println!("Got bad packet");
+            return Ok(());
+        }
+        let packet_hdr = r.unwrap();
         let data_len = packet_hdr.data_len();
         if data_len != 0 {
             if data_len > pkt[1].len {
+                panic!("data_len is bad. data_len: {} pkt[1]: {}", data_len, pkt[1].len);
                 return Err(VsockTransportError::InvalidVsockPacket);
             }
 
@@ -399,6 +412,7 @@ impl VsockTransport for VirtioVsock {
         timeout: u64,
     ) -> core::result::Result<Vec<u8>, VsockTransportError> {
         if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
+            println!("Got immediate data");
             return Ok(data);
         }
 
@@ -417,6 +431,7 @@ impl VsockTransport for VirtioVsock {
             self.pop_used_rx()?;
             if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
                 self.timer.reset_timeout();
+                println!("Got data");
                 return Ok(data);
             }
         }

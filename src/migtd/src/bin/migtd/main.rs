@@ -10,6 +10,7 @@ extern crate alloc;
 use log::info;
 use migtd::migration::{session::MigrationSession, MigrationResult};
 use migtd::{config, event_log, migration};
+use td_payload::println;
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -92,20 +93,29 @@ fn handle_pre_mig() {
         panic!("Migration is not supported by VMM");
     }
     // Loop to wait for request
-    info!("Loop to wait for request\n");
+    info!("Loop tooooooo wait for request\n");
+    use tdx_tdcall::tdreport::TD_REPORT_ADDITIONAL_DATA_SIZE;
+    let tdx_report =
+            tdx_tdcall::tdreport::tdcall_report(&[0u8; TD_REPORT_ADDITIONAL_DATA_SIZE]);
+    println!("TD REPORT: {:?}", tdx_report);
+    println!("I am here");
     loop {
+        println!("I'm not out of the loop, I've still got it");
+        println!("Creating migration session");
         let mut session = MigrationSession::new();
+        println!("Created new session. Waiting for request");
         if session.wait_for_request().is_ok() {
             #[cfg(feature = "vmcall-vsock")]
             {
                 // Safe to unwrap because we have got the request information
+                println!("Calling vsock device init");
                 let info = session.info().unwrap();
                 migtd::driver::vsock::vmcall_vsock_device_init(
                     info.mig_info.mig_request_id,
                     info.mig_socket_info.mig_td_cid,
                 );
             }
-
+            println!("Session op!");
             let status = session
                 .op()
                 .map(|_| MigrationResult::Success)

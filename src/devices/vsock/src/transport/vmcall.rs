@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 use core::arch::asm;
 use core::convert::TryInto;
 use core::sync::atomic::{AtomicBool, Ordering};
-use td_payload::{eoi, interrupt_handler_template};
+use td_payload::{eoi, interrupt_handler_template, println};
 use td_shim_interface::td_uefi_pi::pi::guid;
 use tdx_tdcall::tdx;
 
@@ -95,6 +95,7 @@ impl VmcallVsock {
         let mut data = Vec::new();
 
         if pkt.len() < HEADER_LEN {
+            println!("Bad packet length: {} pkt: {:?}", pkt.len(), pkt);
             return Err(VsockTransportError::InvalidVsockPacket);
         }
         // Read out the packet header into a safe place

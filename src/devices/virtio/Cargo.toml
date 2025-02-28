@@ -9,6 +9,7 @@ bitflags = "1.2.1"
 pci = { path = "../pci" }
 spin = "0.9.2"
 tdx-tdcall = { path = "../../../deps/td-shim/tdx-tdcall", optional = true }
+td-payload = { path = "../../../deps/td-shim/td-payload"}
 volatile = "0.2"
 
 [dependencies.lazy_static]

@@ -52,6 +52,7 @@ impl VsockTimeout for VsockTimer {
 #[cfg(feature = "vmcall-vsock")]
 pub fn vmcall_vsock_device_init(mid: u64, cid: u64) {
     // Create the transport layer of vsock with the virtio transport instance
+    log::info!("inside vmcall_vsock_device_init");
     let vsock_transport = vsock::transport::VmcallVsock::new(
         mid,
         cid,
@@ -60,9 +61,11 @@ pub fn vmcall_vsock_device_init(mid: u64, cid: u64) {
     )
     .expect("Fail to create vsock transport layer");
 
+    log::info!("Binding the vsock device");
     // Bind the vsock device to the VSOCK_DEVICE instance
     vsock::stream::register_vsock_device(VsockDevice::new(Box::new(vsock_transport)))
         .expect("Failed to register vsock device");
+    log::info!("vsock device is bound");
 }
 
 #[cfg(feature = "virtio-vsock")]

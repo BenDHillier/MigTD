@@ -124,13 +124,20 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// Check packet
     pub fn check(&self) -> Result<(), VsockError> {
         if self.buffer.as_ref().len() < self.header_len() {
+            panic!("Vsock error truncated");
             return Err(VsockError::Truncated);
         }
         if self.r#type() != field::TYPE_STREAM {
+            // panic!("Vsock error bad type malformed
+            //     scid: {} dcid: {} src_port: {} dst_port: {}
+            //     dlen: {} rtype: {} op: {} buf_alloc: {}",
+            // self.src_cid(), self.dst_cid(), self.src_port(),
+            // self.dst_port(), self.data_len(), self.r#type(), self.op(), self.buf_alloc());
             return Err(VsockError::Malformed);
         }
         let op = self.op();
         if op == 0 || op > 7 {
+            panic!("Vsock error bad op malformed: {}", op);
             return Err(VsockError::Malformed);
         }
         Ok(())

@@ -13,6 +13,7 @@ use crypto::{
     },
     Error as CryptoError, Result as CryptoResult,
 };
+use td_payload::println;
 use log::error;
 use policy::PolicyError;
 use rust_std_stub::io::{Read, Write};
@@ -25,22 +26,30 @@ const PUBLIC_KEY_HASH_SIZE: usize = 48;
 type Result<T> = core::result::Result<T, RatlsError>;
 
 pub fn server<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
+    println!("Inside ratls::server");
     let signing_key = EcdsaPk::new()?;
+    println!("Created signing key");
     let (certs, quote) = gen_cert(&signing_key)?;
+    println!("Generated cert");
     let certs = vec![certs];
 
     // Server verifies certificate of client
     let config = TlsConfig::new(certs, signing_key, verify_client_cert, quote)?;
+    println!("Created config");
     config.tls_server(stream).map_err(|e| e.into())
 }
 
 pub fn client<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
+    println!("Generating cert");
     let (certs, quote) = gen_cert(&signing_key)?;
+    println!("Generated cert");
     let certs = vec![certs];
 
     // Client verifies certificate of server
+    println!("Creating new TLS config");
     let config = TlsConfig::new(certs, signing_key, verify_server_cert, quote)?;
+    println!("Calling config.tls_client");
     config.tls_client(stream).map_err(|e| e.into())
 }
 
@@ -57,8 +66,11 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         parameters: None,
     };
     let key_usage = BitString::from_bytes(&[0x80])?.to_vec()?;
+    println!("gen_quote");
     let quote = gen_quote(&pub_key)?;
+    println!("get_event_log");
     let event_log = get_event_log().ok_or(RatlsError::InvalidEventlog)?;
+    println!("build x509 cert");
     let mut x509_certificate = CertificateBuilder::new(sig_alg, algorithm, &pub_key)?
         // 1970-01-01T00:00:00Z
         .set_not_before(core::time::Duration::new(0, 0))?
@@ -98,11 +110,19 @@ fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
     // Generate the TD Report that contains the public key hash as nonce
     let mut additional_data = [0u8; 64];
     additional_data[..hash.len()].copy_from_slice(hash.as_ref());
+    println!("Calling tdcall_report");
     let td_report = tdx_tdcall::tdreport::tdcall_report(&additional_data)?;
-
+    println!("Got td report");
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
-        attestation::get_quote(td_report.as_bytes()).map_err(|_| RatlsError::GetQuote)
+        println!("Getting quote");
+        let r = attestation::get_quote(td_report.as_bytes());
+        println!("Got quote yayyyy: {:?}", r);
+        if r.is_err() {
+            println!("Get Quote failed :(");
+            return Err(RatlsError::GetQuote);
+        }
+        return Ok(r.unwrap());
     }
 
     // Only for test purpose to bypass the remote attestation

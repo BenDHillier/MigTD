@@ -5,7 +5,7 @@
 use crate::protocol::field::{FLAG_SHUTDOWN_READ, FLAG_SHUTDOWN_WRITE, HEADER_LEN};
 use crate::protocol::{field, Packet};
 use crate::{VsockAddr, VsockAddrPair, VsockError, VsockTransport, VSOCK_BUF_ALLOC};
-
+use td_payload::println;
 use alloc::{
     boxed::Box, collections::BTreeMap, collections::BTreeSet, collections::VecDeque, vec::Vec,
 };
@@ -87,6 +87,7 @@ pub struct VsockStream {
     addr: VsockAddrPair,
     data_queue: VecDeque<Vec<u8>>,
     rx_cnt: u32,
+    tx_cnt: u32,
 }
 
 impl Read for VsockStream {
@@ -124,6 +125,7 @@ impl VsockStream {
             },
             data_queue: VecDeque::new(),
             rx_cnt: 0,
+            tx_cnt: 0,
         })
     }
 
@@ -146,12 +148,14 @@ impl VsockStream {
 
             Ok(())
         } else {
+            println!("vsock listen state is not closed");
             Err(VsockError::Illegal)
         }
     }
 
     pub fn accept(&self) -> Result<VsockStream> {
         if self.state != State::Listening {
+            println!("vsock accept is not listening");
             return Err(VsockError::Illegal);
         }
 
@@ -164,6 +168,7 @@ impl VsockStream {
 
         let packet = Packet::new_checked(recv.as_slice())?;
         if packet.op() != field::OP_REQUEST {
+            println!("vsock accept op is not request");
             return Err(VsockError::Illegal);
         }
 
@@ -201,6 +206,7 @@ impl VsockStream {
             },
             data_queue: VecDeque::new(),
             rx_cnt: 0,
+            tx_cnt: 0,
         };
 
         add_stream_to_connection_map(&new_stream);
@@ -209,6 +215,7 @@ impl VsockStream {
     }
 
     pub fn connect(&mut self, addr: &VsockAddr) -> Result {
+        println!("INside connect");
         if self.state != State::Closed {
             return Err(VsockError::Illegal);
         }
@@ -228,14 +235,14 @@ impl VsockStream {
         packet.set_flags(0);
         packet.set_fwd_cnt(0);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-
+        println!("Sending config packet to vsock");
         let _ = VSOCK_DEVICE
             .lock()
             .get_mut()
             .ok_or(VsockError::DeviceNotAvailable)?
             .transport
             .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
-
+        println!("Receiving response from vsock");
         self.state = State::RequestSend;
         let recv = VSOCK_DEVICE
             .lock()
@@ -243,7 +250,7 @@ impl VsockStream {
             .ok_or(VsockError::DeviceNotAvailable)?
             .transport
             .dequeue(self, DEFAULT_TIMEOUT)?;
-
+        println!("Checking packet");
         let packet = Packet::new_checked(recv.as_slice())?;
 
         if packet.r#type() == field::TYPE_STREAM
@@ -256,6 +263,14 @@ impl VsockStream {
             self.state = State::Establised;
             Ok(())
         } else {
+            println!("Bad packet: type {} dstcid {} dstport {} op {} src port {} src cid {}",
+            packet.r#type(),
+            packet.dst_cid(),
+            packet.dst_port(),
+            packet.op(),
+            packet.src_port(),
+            packet.src_cid()
+        );
             Err(VsockError::REFUSED)
         }
     }
@@ -288,13 +303,16 @@ impl VsockStream {
             self.state = State::Closing;
             self.reset()
         } else {
+            println!("vsock shutdown failed");
             Err(VsockError::Illegal)
         }
     }
 
     pub fn send(&mut self, buf: &[u8], _flags: u32) -> Result<usize> {
+        println!("Calling vsock send! buf: {:?}", buf);
         let state = self.state;
         if state != State::Establised {
+            println!("vsock send failed. State not established");
             return Err(VsockError::Illegal);
         }
         let mut header_buf = [0u8; HEADER_LEN];
@@ -315,13 +333,18 @@ impl VsockStream {
             .ok_or(VsockError::DeviceNotAvailable)?
             .transport
             .enqueue(self, packet.as_ref(), buf, DEFAULT_TIMEOUT)?;
-
+            println!("Vsock send succeeded");
+        self.tx_cnt += buf.len() as u32;
+        println!("Sent {} bytes. data_len: {}.",
+            self.tx_cnt, buf.len());
         Ok(buf.len())
     }
 
     pub fn recv(&mut self, buf: &mut [u8], _flags: u32) -> Result<usize> {
+        println!("Calling vsock recv!");
         let state = self.state;
         if state != State::Establised {
+            println!("vsock recv failed. State not established");
             return Err(VsockError::Illegal);
         }
 
@@ -332,17 +355,26 @@ impl VsockStream {
                 .ok_or(VsockError::DeviceNotAvailable)?
                 .transport
                 .dequeue(self, DEFAULT_TIMEOUT)?;
+            println!("Checking received packet: {:?}", recv);
             let packet = Packet::new_checked(recv.as_slice())?;
+            println!("Packet is good");
 
             if packet.op() == field::OP_SHUTDOWN {
+                println!("Recv op is shutdown");
                 self.shutdown()?;
                 return Ok(0);
             }
             if packet.op() == field::OP_RST {
+                println!("Recv op is reset");
                 self.reset()?;
                 return Err(VsockError::Illegal);
             }
+            if packet.op() == field::OP_CREDIT_UPDATE {
+                println!("Ignore credit update op and call recv again");
+                return self.recv(buf, _flags);
+            }
             if packet.op() != field::OP_RW {
+                println!("Recv op is not Read/Write: {:?}", packet.op());
                 return Err(VsockError::Illegal);
             }
 
@@ -355,9 +387,11 @@ impl VsockStream {
                     .dequeue(self, DEFAULT_TIMEOUT)?;
 
                 self.rx_cnt += packet.data_len();
+                println!("Received {} bytes", self.rx_cnt);
                 if packet.data_len() as usize <= recv.len() {
                     recv.truncate(packet.data_len() as usize);
                 } else {
+                    println!("Recv data len is too large");
                     return Err(VsockError::Illegal);
                 }
 
@@ -420,6 +454,7 @@ impl VsockStream {
                 Ok(())
             }
         } else {
+            println!("Reset failed");
             Err(VsockError::Illegal)
         }
     }

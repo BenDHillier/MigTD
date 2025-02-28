@@ -1312,6 +1312,7 @@ dependencies = [
  "lazy_static",
  "pci",
  "spin 0.9.8",
+ "td-payload",
  "tdx-tdcall",
  "volatile 0.2.7",
 ]

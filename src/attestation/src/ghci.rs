@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use core::{ffi::c_void, slice::from_raw_parts_mut};
 use td_payload::arch::apic::{disable, enable_and_hlt};
 use td_payload::arch::idt::register;
+use td_payload::println;
 use td_payload::{interrupt_handler_template, mm::shared::SharedMemory};
 use tdx_tdcall::tdx::tdvmcall_get_quote;
 
@@ -33,12 +34,18 @@ pub extern "C" fn servtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i3
     shared.as_mut_bytes()[..len as usize].copy_from_slice(input);
 
     set_vmm_notification();
-
-    if tdvmcall_get_quote(shared.as_mut_bytes()).is_err() {
+    println!("Set VMM notification. Calling tdvmcall get quote");
+    let e = tdvmcall_get_quote(shared.as_mut_bytes());
+    if e.is_err() {
+        println!("TDVMCALL failed with err: {:?}", e);
         return AttestLibError::QuoteFailure as i32;
     }
+    println!("tdvamll_get_quote returned good maybe..");
+    
 
     wait_for_vmm_notification();
+    println!("Finished waiting for vmm notification");
+    println!("resp: {:?}", shared.as_bytes());
 
     input.copy_from_slice(&shared.as_bytes()[..len as usize]);
 

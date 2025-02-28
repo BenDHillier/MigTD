@@ -8,6 +8,7 @@ use core::mem::size_of;
 use core::slice;
 use core::sync::atomic::{fence, Ordering};
 use volatile::Volatile;
+use td_payload::println;
 
 use crate::{Result, VirtioError, VirtioTransport, PAGE_SIZE};
 
@@ -240,7 +241,7 @@ impl VirtQueue {
             .ok_or(VirtioError::InvalidRingIndex)?;
         let index = last_used_slot.id.read() as u16;
         let len = last_used_slot.len.read();
-
+        println!("Virtqueue popping at index {}", index);
         self.recycle_descriptors(index, g2h, h2g)?;
         self.last_used_idx = self.last_used_idx.wrapping_add(1);
 
